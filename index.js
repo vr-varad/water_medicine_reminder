@@ -2,6 +2,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const dotenv = require('dotenv');
 const cron = require('node-cron');
+const nodemailer = require('nodemailer')
 dotenv.config();
 const cors = require('cors');
 
@@ -16,44 +17,57 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 const now = new Date().toLocaleString(undefined, { timeZone: 'Asia/Kolkata' });
                     
-const sendReminder = async (phoneNumber) => {
+const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    auth: {
+      user: process.env.emailUser,
+      pass: process.env.emailPassword,
+    },
+  });
+  
+  const sendReminderEmail = async (name, emailAddress, reminderDescription,type) => {
     try {
-        const reminderList = await reminderModel.find({}).exec();
-        if (reminderList) {
-            for (const reminder of reminderList) {
-                if (!reminder.isReminded) {
-                    const now = new Date().toLocaleString(undefined, { timeZone: 'Asia/Kolkata' });
-                    
-                    if (reminder.time < now) {
-                        console.log(1);
-                        await reminderModel.findByIdAndUpdate(reminder._id, { isReminded: true });
-
-                        const accountSid = process.env.accountSid;
-                        const authToken = process.env.twilioToken;
-                        const client = require('twilio')(accountSid, authToken);
-
-                        client.messages
-                            .create({
-                                body: reminder.description,
-                                from: 'whatsapp:+14155238886',
-                                to: `whatsapp:${phoneNumber}`
-                            })
-                            .then(message => console.log(message.sid));
-                    }
-                }
-            }
-        }
+      // Setup email options
+      const info = await transporter.sendMail({
+        from: process.env.emailUser, // sender address
+        to: emailAddress, // list of receivers
+        subject: `${type.toUpperCase()} Reminder`, // Subject line
+        text: `Hello ${name}`, // plain text body
+        html: `<p><b>${reminderDescription}</b></p><p>Best regards,<br>Your Reminder App</p>`, // html body
+      })
+      console.log('Email sent:', info.response);
     } catch (err) {
-        console.error(err);
+      console.error(err);
     }
-};
+  };
+  
+  const sendReminder = async (name, emailAddress) => {
+    try {
+      const reminderList = await reminderModel.find({}).exec();
+      if (reminderList) {
+        for (const reminder of reminderList) {
+          if (!reminder.isReminded) {
+            const now = new Date().toLocaleString(undefined, { timeZone: 'Asia/Kolkata' });
+  
+            if (reminder.time < now) {
+              console.log(1);
+              await reminderModel.findByIdAndUpdate(reminder._id, { isReminded: true });
+  
+              // Send reminder email
+              sendReminderEmail(name, emailAddress, reminder.description,reminder.type);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
-
-cron.schedule('0 0 * * *', async () => {
+const task = cron.schedule('* * * * *', async () => {
     try {
         const now = new Date().toLocaleString(undefined, { timeZone: 'Asia/Kolkata' });
-        const reminderList = await reminderModel.find({ isReminded: true, time: { $lt: now } }).exec();
-
+        const reminderList = await reminderModel.find({ isReminded: true }).exec();
         if (reminderList) {
             for (const reminder of reminderList) {
                 await reminderModel.findByIdAndUpdate(reminder._id, { isReminded: false });
@@ -61,6 +75,7 @@ cron.schedule('0 0 * * *', async () => {
                 newTime.setDate(newTime.getDate() + 1);
 
                 await reminderModel.findByIdAndUpdate(reminder._id, { time: newTime });
+                console.log('done')
             }
         }
     } catch (err) {
@@ -69,11 +84,19 @@ cron.schedule('0 0 * * *', async () => {
 });
 
 
-setInterval(() => sendReminder('+919359203984'), 1000);
 
+const startReminder = (name,emailAddress)=>{
+    setInterval(() => {
+    sendReminder(name,emailAddress)
+    task.start()}, 1000);
+}
 
 app.get('/api/v1/watMedReminder', async (req, res) => {
     try {
+        const emailAddress = req.headers['emailaddress'];
+        const name = req.headers['name']
+        console.log(emailAddress)
+        startReminder(name,emailAddress)
         const results = await reminderModel.find({});
         return res.status(200).json({
             msg: 'Success',
